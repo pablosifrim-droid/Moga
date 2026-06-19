@@ -32,7 +32,7 @@ final class FocusStackMerger {
 
     // MARK: - Private
 
-    private static func toFloatBuffers(_ images: [CGImage], width: Int, height: Int) -> [[Float]]? {
+    private nonisolated static func toFloatBuffers(_ images: [CGImage], width: Int, height: Int) -> [[Float]]? {
         let pixelCount = width * height * 4
         var result: [[Float]] = []
 
@@ -52,7 +52,7 @@ final class FocusStackMerger {
         return result
     }
 
-    private static func laplacianMap(_ buffer: [Float], width: Int, height: Int) -> [Float] {
+    private nonisolated static func laplacianMap(_ buffer: [Float], width: Int, height: Int) -> [Float] {
         // Extract luminance channel (Y = 0.299R + 0.587G + 0.114B)
         var luma = [Float](repeating: 0, count: width * height)
         for i in 0..<width * height {
@@ -78,7 +78,7 @@ final class FocusStackMerger {
         return sharpness
     }
 
-    private static func weightedBlend(buffers: [[Float]], maps: [[Float]],
+    private nonisolated static func weightedBlend(buffers: [[Float]], maps: [[Float]],
                                       width: Int, height: Int) -> [Float] {
         let pixelCount = width * height
         var result = [Float](repeating: 0, count: pixelCount * 4)
@@ -101,7 +101,7 @@ final class FocusStackMerger {
         return result
     }
 
-    private static func toCGImage(_ buffer: [Float], width: Int, height: Int) -> CGImage? {
+    private nonisolated static func toCGImage(_ buffer: [Float], width: Int, height: Int) -> CGImage? {
         let pixels = buffer.map { UInt8(min(max($0 * 255, 0), 255)) }
         let colorSpace = CGColorSpaceCreateDeviceRGB()
         let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue)
