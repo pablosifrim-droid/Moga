@@ -3,60 +3,112 @@ import Foundation
 // MARK: - Packet type identifiers (8-byte header: type UInt32 + length UInt32)
 
 enum PacketType: UInt32 {
-    case connect    = 0x01
-    case disconnect = 0x02
-    case config     = 0x03
-    case hardware   = 0x04
-    case pin        = 0x05
-    case light      = 0x06
-    case motor      = 0x07
-    case camera     = 0x08
-    case params     = 0x09
-    case photo      = 0x0A
-    case capture    = 0x0B
-    case data       = 0x0C
-    case chunk      = 0x0D
-    case video      = 0x0E
-    case stream     = 0x0F
-    case metadata   = 0x10
-    case command    = 0x11
-    case info       = 0x12
-    case status     = 0x13
+    case connect    = 0x00
+    case disconnect = 0x01
+    case config     = 0x02
+    case hardware   = 0x03
+    case pin        = 0x04
+    case light      = 0x05
+    case motor      = 0x06
+    case camera     = 0x07
+    case params     = 0x08
+    case photo      = 0x09
+    case capture    = 0x0A
+    case data       = 0x0B
+    case chunk      = 0x0C
+    case video      = 0x0D
+    case stream     = 0x0E
+    case metadata   = 0x0F
+    case command    = 0x10
+    case info       = 0x11
+    case status     = 0x12
 }
 
 // MARK: - Packet header
 
 struct PacketHeader {
     let type: PacketType
-    let length: UInt32
+    let totalSize: UInt32   // total packet size including this 8-byte header
 
     static let size = 8
+
+    var payloadSize: Int { max(0, Int(totalSize) - Self.size) }
 
     func encode() -> Data {
         var data = Data(count: 8)
         data.writeUInt32(type.rawValue, at: 0)
-        data.writeUInt32(length, at: 4)
+        data.writeUInt32(totalSize, at: 4)
         return data
     }
 
     static func decode(from data: Data) -> PacketHeader? {
         guard data.count >= size,
               let type = PacketType(rawValue: data.readUInt32(at: 0)) else { return nil }
-        return PacketHeader(type: type, length: data.readUInt32(at: 4))
+        return PacketHeader(type: type, totalSize: data.readUInt32(at: 4))
     }
 }
 
 // MARK: - Individual packet payloads
 
 struct ConnectPacket {
-    let protocolVersion: UInt8  // currently 1
-    let enableLogging: Bool
+    let protocolVersion: UInt32  // 0 as observed in Windows client capture
+    let enableLogging: Bool      // 1 byte bool
 
     func encode() -> Data {
-        var d = Data(count: 2)
-        d[0] = protocolVersion
-        d[1] = enableLogging ? 1 : 0
+        var d = Data(count: 5)
+        d.writeUInt32(protocolVersion, at: 0)
+        d[4] = enableLogging ? 1 : 0
         return d
+    }
+}
+
+// ConfigPacket — sent immediately after Connect. Layout verified by Wireshark capture.
+// Field order in binary differs from echo display order.
+struct ConfigPacket {
+    var controllerType: UInt32 = 0
+    var cameraType: UInt32 = 1
+    var pinExternalCamera: UInt32 = 10
+    var pinLight1: UInt32 = 17
+    var pinLight2: UInt32 = 27
+    var pinRotorDirection: UInt32 = 5
+    var pinRotorStep: UInt32 = 6
+    var pinRotorEnable: UInt32 = 0
+    var pinTurntableDirection: UInt32 = 9
+    var pinTurntableStep: UInt32 = 11
+    var pinTurntableEnable: UInt32 = 0
+    var pinEndstopLo: UInt32 = 0
+    var pinEndstopHi: UInt32 = 0
+    var pinLightFan: UInt32 = 0
+    var pinCaseFan: UInt32 = 0
+    var rotorStepsPerRotation: UInt32 = 48000
+    var rotorDelay: UInt32 = 50
+    var rotorAcceleration: Float = 1.0
+    var rotorRamp: UInt32 = 1000
+    var rotorReversed: Bool = false
+    var turntableStepsPerRotation: UInt32 = 3200
+    var turntableDelay: UInt32 = 50
+    var turntableAcceleration: Float = 1.0
+    var turntableRamp: UInt32 = 500
+    var turntableReversed: Bool = false
+    var caseFanThreshold: UInt32 = 50
+    var transferCompression: Bool = true
+
+    func encode() -> Data {
+        var d = Data()
+        func u32(_ v: UInt32) { var x = v.littleEndian; d.append(contentsOf: withUnsafeBytes(of: &x) { Array($0) }) }
+        func f32(_ v: Float)  { var x = v.bitPattern.littleEndian; d.append(contentsOf: withUnsafeBytes(of: &x) { Array($0) }) }
+        func u8 (_ v: Bool)   { d.append(v ? 1 : 0) }
+
+        u32(controllerType); u32(cameraType)
+        u32(pinExternalCamera); u32(pinLight1); u32(pinLight2)
+        u32(pinRotorDirection); u32(pinRotorStep); u32(pinRotorEnable)
+        u32(pinTurntableDirection); u32(pinTurntableStep); u32(pinTurntableEnable)
+        u32(pinEndstopLo); u32(pinEndstopHi); u32(pinLightFan); u32(pinCaseFan)
+        u32(rotorStepsPerRotation); u32(rotorDelay); f32(rotorAcceleration); u32(rotorRamp); u8(rotorReversed)
+        u32(turntableStepsPerRotation); u32(turntableDelay); f32(turntableAcceleration); u32(turntableRamp); u8(turntableReversed)
+        u32(caseFanThreshold); u8(transferCompression)
+        d.append(1) // observed trailing byte in Windows client capture
+        return d   // 100 bytes
     }
 }
 
@@ -144,7 +196,7 @@ struct StatusPacket {
     }
 }
 
-// MARK: - Data helpers (little-endian)
+// MARK: - Data helpers (little-endian, matching Windows/RPi native byte order)
 
 extension Data {
     func readUInt32(at offset: Int) -> UInt32 {

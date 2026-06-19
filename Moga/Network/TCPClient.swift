@@ -28,11 +28,14 @@ final class TCPClient {
             DispatchQueue.main.async {
                 switch newState {
                 case .ready:
+                    NSLog("🟢 TCP connected")
                     self?.state = .connected
                     self?.receiveHeader()
                 case .failed(let error):
+                    NSLog("🔴 TCP failed: \(error)")
                     self?.state = .failed(error)
                 case .cancelled:
+                    NSLog("⚫️ TCP cancelled")
                     self?.state = .disconnected
                 default:
                     break
@@ -49,7 +52,9 @@ final class TCPClient {
     }
 
     func send(type: PacketType, payload: Data = Data()) {
-        let header = PacketHeader(type: type, length: UInt32(payload.count))
+        let totalSize = UInt32(PacketHeader.size + payload.count)
+        NSLog("📤 Sending packet type=\(type) totalSize=\(totalSize) payload=\(payload.map { String(format: "%02X", $0) }.joined(separator: " "))")
+        let header = PacketHeader(type: type, totalSize: totalSize)
         var packet = header.encode()
         packet.append(payload)
         connection?.send(content: packet, completion: .idempotent)
@@ -67,7 +72,7 @@ final class TCPClient {
             }
             guard let data, let header = PacketHeader.decode(from: data) else { return }
 
-            if header.length > 0 {
+            if header.payloadSize > 0 {
                 self.receivePayload(header: header)
             } else {
                 DispatchQueue.main.async { self.onPacket?(header.type, Data()) }
@@ -77,7 +82,7 @@ final class TCPClient {
     }
 
     private func receivePayload(header: PacketHeader) {
-        let length = Int(header.length)
+        let length = header.payloadSize
         connection?.receive(minimumIncompleteLength: length,
                             maximumLength: length) { [weak self] data, _, _, error in
             guard let self else { return }
@@ -86,6 +91,7 @@ final class TCPClient {
                 return
             }
             let payload = data ?? Data()
+            NSLog("📦 Received packet type=\(header.type) length=\(payload.count) bytes=\(payload.prefix(16).map { String(format: "%02X", $0) }.joined(separator: " "))")
             DispatchQueue.main.async { self.onPacket?(header.type, payload) }
             self.receiveHeader()
         }

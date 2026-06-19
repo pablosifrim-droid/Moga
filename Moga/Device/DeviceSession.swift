@@ -73,13 +73,23 @@ final class DeviceSession {
     // MARK: - Private
 
     private func sendHandshake() {
-        let packet = ConnectPacket(protocolVersion: 1, enableLogging: false)
-        tcp.send(type: .connect, payload: packet.encode())
+        let connect = ConnectPacket(protocolVersion: 0, enableLogging: true)
+        tcp.send(type: .connect, payload: connect.encode())
+
+        let cfg = ConfigPacket()
+        tcp.send(type: .config, payload: cfg.encode())
+
         state = .ready
     }
 
     private func handle(type: PacketType, data: Data) {
         switch type {
+        case .command:
+            if let msg = String(data: data, encoding: .utf8) {
+                NSLog("📋 Device command: \(msg.prefix(200))")
+            }
+        case .info:
+            NSLog("ℹ️ Device info packet (\(data.count) bytes)")
         case .status:
             if let status = StatusPacket.decode(from: data) {
                 state = status.isScanning ? .scanning : .ready
