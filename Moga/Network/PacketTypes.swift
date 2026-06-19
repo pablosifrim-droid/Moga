@@ -140,20 +140,100 @@ struct MotorPacket {
     }
 }
 
-struct PhotoPacket {
-    let focusDiopters: Float   // focus distance in diopters
-    let rotorAngle: Float
-    let turntableAngle: Float
-    let delayMs: UInt16
-    let stackIndex: UInt16
+// CameraPacket — sent once per scan position. Layout confirmed by pcap of Windows
+// Composer client. Device moves motors to the specified angles, captures stackCount
+// photos, then sends the images back as Chunk packets.
+struct CameraPacket {
+    var positionIndex: UInt32   // 1-based position number
+    var stackCount: UInt32 = 1  // exposures per position (1 = single shot)
+    var rotorAngle: Float       // degrees (horizontal / azimuth)
+    var turntableAngle: Float   // degrees (vertical / elevation, negative = down)
+    var delayMs: UInt32 = 50    // capture delay in ms
 
     func encode() -> Data {
-        var d = Data(count: 18)
-        d.writeFloat(focusDiopters, at: 0)
-        d.writeFloat(rotorAngle, at: 4)
+        var d = Data(count: 36)
+        d.writeUInt32(positionIndex, at: 0)
+        d.writeUInt32(1, at: 4)             // constant = 1 (observed in all pcap packets)
+        d.writeUInt32(0, at: 8)             // = 0
+        d.writeUInt32(0, at: 12)            // = 0
+        d.writeUInt32(stackCount, at: 16)
+        d.writeFloat(rotorAngle, at: 20)
+        d.writeFloat(turntableAngle, at: 24)
+        d.writeUInt32(delayMs, at: 28)
+        d.writeUInt32(0, at: 32)
+        return d
+    }
+}
+
+// CameraSetupPacket — sent after config echo, before any CameraPackets.
+// Triggers Camera::Setup() on the daemon (libcamera segfaults without this).
+// Payload is the exact 64 bytes observed in the Windows client pcap (offset 46-109).
+// Fields: captureMode=1, width=2328, height=1748, stepsPerRot=28000, gains=1.0×3.
+struct CameraSetupPacket {
+    func encode() -> Data {
+        return Data([
+            0x01, 0x00, 0x00, 0x00,   // captureMode = 1
+            0x18, 0x09, 0x00, 0x00,   // width = 2328
+            0xD4, 0x06, 0x00, 0x00,   // height = 1748
+            0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,
+            0x60, 0x6D, 0x00, 0x00,   // 28000 (steps/rotation)
+            0x00, 0x00, 0x80, 0x3F,   // 1.0
+            0x00, 0x00, 0x80, 0x3F,   // 1.0
+            0x00, 0x00, 0x80, 0x3F,   // 1.0
+            0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,
+        ])
+    }
+}
+
+// VideoHeaderPacket — type=0x0D, received from daemon before stream data.
+// Payload layout confirmed from 10-position scan log:
+//   [0-3]  positionIndex
+//   [4-7]  stackIndex
+//   [16-19] small field (varies per frame, possibly frame count)
+//   [20-23] width  = 2328 (0x18090000 LE)
+//   [24-27] height = 1748 (0xD4060000 LE)
+//   [32-35] compressedSize  ← exact bytes to receive in stream chunks
+//   [36-39] uncompressedSize = 6,104,016 (0xD0235D00 LE)
+struct VideoHeaderPacket {
+    let positionIndex: UInt32
+    let stackIndex: UInt32
+    let compressedSize: UInt32    // total stream bytes to collect before decompressing
+    let uncompressedSize: UInt32  // expected output size after LZ4 decompress
+
+    static func decode(from data: Data) -> VideoHeaderPacket? {
+        guard data.count >= 40 else { return nil }
+        return VideoHeaderPacket(
+            positionIndex:   data.readUInt32(at: 0),
+            stackIndex:      data.readUInt32(at: 4),
+            compressedSize:  data.readUInt32(at: 32),
+            uncompressedSize: data.readUInt32(at: 36)
+        )
+    }
+}
+
+// PhotoPacket — manual photo trigger (for single-shot / manual control mode).
+// Format from daemon strings: photo #scanId-stackIndex, turntable, rotor, focus
+struct PhotoPacket {
+    let scanId: UInt32
+    let stackIndex: UInt32
+    let turntableAngle: Float
+    let rotorAngle: Float
+    let focusDiopters: Float
+
+    func encode() -> Data {
+        var d = Data(count: 20)
+        d.writeUInt32(scanId, at: 0)
+        d.writeUInt32(stackIndex, at: 4)
         d.writeFloat(turntableAngle, at: 8)
-        d.writeUInt16(delayMs, at: 12)
-        d.writeUInt16(stackIndex, at: 14)
+        d.writeFloat(rotorAngle, at: 12)
+        d.writeFloat(focusDiopters, at: 16)
         return d
     }
 }

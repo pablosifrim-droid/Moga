@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 struct ScanView: View {
     let session: DeviceSession
@@ -8,19 +9,46 @@ struct ScanView: View {
     @State private var selectedPattern: ScanPattern = .fibonacci
     @State private var photoCount: Int = 100
     @State private var projectName: String = ""
+    @State private var outputFolder: URL? = nil
     @State private var controller: ScanController? = nil
     @State private var currentProject: MogaProject? = nil
     @State private var progress: Double = 0
+
+    private var outputFolderLabel: String {
+        outputFolder?.path(percentEncoded: false) ?? "~/Documents/Moga Projects (default)"
+    }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 Text("New Scan").font(.title2).bold()
 
-                // Project name
+                // Project name + output folder
                 GroupBox("Project") {
-                    TextField("Project name", text: $projectName)
-                        .textFieldStyle(.roundedBorder)
+                    VStack(alignment: .leading, spacing: 10) {
+                        TextField("Project name", text: $projectName)
+                            .textFieldStyle(.roundedBorder)
+
+                        HStack(spacing: 8) {
+                            Image(systemName: "folder")
+                                .foregroundStyle(.secondary)
+                            Text(outputFolderLabel)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Spacer()
+                            Button("Choose…") { chooseOutputFolder() }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                            if outputFolder != nil {
+                                Button("Reset") { outputFolder = nil }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+                            }
+                        }
+                    }
+                    .padding(4)
                 }
 
                 // Scan pattern
@@ -57,7 +85,7 @@ struct ScanView: View {
                     GroupBox("Progress") {
                         VStack(alignment: .leading, spacing: 8) {
                             ProgressView(value: progress)
-                            Text("\(ctrl.currentPositionIndex) / \(ctrl.totalPositions) positions")
+                            Text("\(ctrl.photosReceived) photos received")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                         .padding(4)
@@ -79,26 +107,38 @@ struct ScanView: View {
         }
     }
 
+    private func chooseOutputFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.prompt = "Choose Output Folder"
+        panel.message = "Photos from this scan will be saved inside the chosen folder."
+        if panel.runModal() == .OK {
+            outputFolder = panel.url
+        }
+    }
+
     private func startScan() {
         guard let project = try? projectManager.createProject(
             name: projectName.trimmingCharacters(in: .whitespaces),
             photoCount: photoCount,
             pattern: selectedPattern.rawValue,
             focusStack: focusConfig.enabled,
-            stackSize: focusConfig.clampedStackSize
+            stackSize: focusConfig.clampedStackSize,
+            outputFolder: outputFolder
         ) else { return }
 
         currentProject = project
-        let ctrl = ScanController(session: session, focusConfig: focusConfig)
-        ctrl.onBundleComplete = { posIndex, images in
-            progress = Double(posIndex + 1) / Double(photoCount)
-            for (stackIndex, data) in images.enumerated() {
-                try? projectManager.savePhoto(data, project: project,
-                                              positionIndex: posIndex, stackIndex: stackIndex)
-            }
+        let ctrl = ScanController(session: session)
+        ctrl.onPhotoReceived = { (photoIndex: UInt32, jpeg: Data) in
+            progress = min(1.0, Double(ctrl.photosReceived) / Double(photoCount))
+            try? projectManager.savePhoto(jpeg, project: project,
+                                          positionIndex: Int(photoIndex), stackIndex: 0)
         }
         controller = ctrl
-        ctrl.start(pattern: selectedPattern, photoCount: photoCount)
+        ctrl.start(photoCount: photoCount,
+                   stackSize: UInt32(focusConfig.clampedStackSize))
     }
 
     private func cancelScan() {

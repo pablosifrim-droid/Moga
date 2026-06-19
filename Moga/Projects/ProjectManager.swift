@@ -9,18 +9,20 @@ struct MogaProject: Codable, Identifiable, Hashable {
     var patternName: String
     var focusStackEnabled: Bool
     var stackSize: Int
+    var baseURL: URL?   // nil = default Documents/Moga Projects
 }
 
 @Observable
 final class ProjectManager {
     private(set) var projects: [MogaProject] = []
 
-    private var rootURL: URL {
+    private var defaultRootURL: URL {
         URL.documentsDirectory.appendingPathComponent("Moga Projects", isDirectory: true)
     }
 
     func projectURL(_ project: MogaProject) -> URL {
-        rootURL.appendingPathComponent(project.name, isDirectory: true)
+        let base = project.baseURL ?? defaultRootURL
+        return base.appendingPathComponent(project.name, isDirectory: true)
     }
 
     func photosURL(_ project: MogaProject) -> URL {
@@ -30,11 +32,13 @@ final class ProjectManager {
     // MARK: - Create
 
     func createProject(name: String, photoCount: Int, pattern: String,
-                       focusStack: Bool, stackSize: Int) throws -> MogaProject {
+                       focusStack: Bool, stackSize: Int,
+                       outputFolder: URL? = nil) throws -> MogaProject {
         let project = MogaProject(
             id: UUID(), name: name, createdAt: Date(),
             photoCount: photoCount, patternName: pattern,
-            focusStackEnabled: focusStack, stackSize: stackSize
+            focusStackEnabled: focusStack, stackSize: stackSize,
+            baseURL: outputFolder
         )
         let photosDir = photosURL(project)
         try FileManager.default.createDirectory(at: photosDir, withIntermediateDirectories: true)
@@ -76,7 +80,7 @@ final class ProjectManager {
 
     func loadProjects() {
         guard let contents = try? FileManager.default.contentsOfDirectory(
-            at: rootURL, includingPropertiesForKeys: nil) else { return }
+            at: defaultRootURL, includingPropertiesForKeys: nil) else { return }
         projects = contents.compactMap { url in
             let metaURL = url.appendingPathComponent("project.json")
             guard let data = try? Data(contentsOf: metaURL),
