@@ -116,26 +116,35 @@ struct DisconnectPacket {
     func encode() -> Data { Data() }
 }
 
+// LightPacket: daemon log says "light[%u] = %i" → lightIndex (UInt32) + state (UInt32).
+// Daemon has two light pins (pinLight1, pinLight2). Send both indices to toggle all lights.
 struct LightPacket {
+    let lightIndex: UInt32   // 0 = pinLight1, 1 = pinLight2
     let on: Bool
-    func encode() -> Data { Data([on ? 1 : 0]) }
+
+    func encode() -> Data {
+        var d = Data(count: 8)
+        d.writeUInt32(lightIndex, at: 0)
+        d.writeUInt32(on ? 1 : 0, at: 4)
+        return d
+    }
 }
 
+// MotorPacket: daemon log says "motor[%u] += %f" / "motor[%u] = %f" / "Set zero position".
+// motorIndex (UInt32) + angle (Float) + mode (UInt32: 0=relative, 1=absolute, 2=zero).
 struct MotorPacket {
-    enum MotorID: UInt8 { case rotor = 0, turntable = 1 }
-    enum Mode: UInt8 { case relative = 0, absolute = 1 }
+    enum MotorID: UInt32 { case rotor = 0, turntable = 1 }
+    enum Mode: UInt32 { case relative = 0, absolute = 1, zero = 2 }
 
     let motor: MotorID
     let mode: Mode
-    let angle: Float   // degrees
-    let zeroPosition: Bool
+    let angle: Float   // degrees; ignored when mode == .zero
 
     func encode() -> Data {
-        var d = Data(count: 7)
-        d[0] = motor.rawValue
-        d[1] = mode.rawValue
-        d.writeFloat(angle, at: 2)
-        d[6] = zeroPosition ? 1 : 0
+        var d = Data(count: 12)
+        d.writeUInt32(motor.rawValue, at: 0)
+        d.writeFloat(angle, at: 4)
+        d.writeUInt32(mode.rawValue, at: 8)
         return d
     }
 }

@@ -159,8 +159,7 @@ struct ScanView: View {
                                           positionIndex: Int(photoIndex), stackIndex: 0)
         }
         ctrl.onScanComplete = {
-            // Return rotor to 0° (absolute) after scan finishes
-            session.moveMotor(.rotor, angle: 0, mode: .absolute)
+            session.moveMotor(.rotor, angle: 0, mode: .absolute)  // return to equator
             controller = nil
         }
         controller = ctrl
@@ -205,10 +204,10 @@ struct MotorControlsView: View {
                 .frame(width: 72, alignment: .leading)
                 .font(.caption.bold())
 
-            // Zero
-            Button("Z") { session.moveMotor(motor, angle: 0, mode: .absolute) }
+            // Zero — sets current position as the motor's home (0°)
+            Button("Z") { session.zeroMotor(motor) }
                 .buttonStyle(.bordered).controlSize(.small)
-                .help("Move to 0°")
+                .help("Set current position as 0°")
 
             Divider().frame(height: 20)
 

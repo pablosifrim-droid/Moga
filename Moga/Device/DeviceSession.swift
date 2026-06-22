@@ -65,11 +65,17 @@ final class DeviceSession {
 
     func setLight(on: Bool) {
         isLightOn = on   // optimistic — device doesn't echo light packets reliably
-        tcp.send(type: .light, payload: LightPacket(on: on).encode())
+        // Daemon has two light pins; send both indices
+        tcp.send(type: .light, payload: LightPacket(lightIndex: 0, on: on).encode())
+        tcp.send(type: .light, payload: LightPacket(lightIndex: 1, on: on).encode())
     }
 
     func moveMotor(_ motor: MotorPacket.MotorID, angle: Float, mode: MotorPacket.Mode = .relative) {
-        tcp.send(type: .motor, payload: MotorPacket(motor: motor, mode: mode, angle: angle, zeroPosition: false).encode())
+        tcp.send(type: .motor, payload: MotorPacket(motor: motor, mode: mode, angle: angle).encode())
+    }
+
+    func zeroMotor(_ motor: MotorPacket.MotorID) {
+        tcp.send(type: .motor, payload: MotorPacket(motor: motor, mode: .zero, angle: 0).encode())
     }
 
     // MARK: - Private
