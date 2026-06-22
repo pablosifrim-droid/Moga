@@ -130,21 +130,31 @@ struct LightPacket {
     }
 }
 
-// MotorPacket: daemon log says "motor[%u] += %f" / "motor[%u] = %f" / "Set zero position".
-// motorIndex (UInt32) + angle (Float) + mode (UInt32: 0=relative, 1=absolute, 2=zero).
+// MotorPacket — confirmed from daemon disassembly (HandlePacketEPKNS_12Packet_MotorE):
+//   totalSize must be 0x18 = 24 (8 header + 16 payload).
+//   Payload layout:
+//     [0-3]  motorIndex  UInt32  — 0=rotor, 1=turntable
+//     [4-7]  angle       Float   — degrees
+//     [8-11] mode        UInt32  — 0=relative, 1=absolute
+//     [12-15] setZero    UInt32  — 1 = define current position as 0° (does not move motor)
+//   Special: mode=1 + angle=0.0 + setZero=1 → SetZero (mark current pos as home)
+//            mode=1 + angle=0.0 + setZero=0 → no-op (daemon explicitly ignores)
+//            mode=0              + any angle → relative Rotate
+//            mode=1 + angle!=0.0             → absolute RotateTo
 struct MotorPacket {
     enum MotorID: UInt32 { case rotor = 0, turntable = 1 }
-    enum Mode: UInt32 { case relative = 0, absolute = 1, zero = 2 }
 
     let motor: MotorID
-    let mode: Mode
-    let angle: Float   // degrees; ignored when mode == .zero
+    let angle: Float
+    let mode: UInt32    // 0=relative, 1=absolute
+    let setZero: UInt32 // 1 to mark current position as 0° reference
 
     func encode() -> Data {
-        var d = Data(count: 12)
+        var d = Data(count: 16)
         d.writeUInt32(motor.rawValue, at: 0)
         d.writeFloat(angle, at: 4)
-        d.writeUInt32(mode.rawValue, at: 8)
+        d.writeUInt32(mode, at: 8)
+        d.writeUInt32(setZero, at: 12)
         return d
     }
 }

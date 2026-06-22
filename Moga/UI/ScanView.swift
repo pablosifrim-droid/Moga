@@ -159,7 +159,8 @@ struct ScanView: View {
                                           positionIndex: Int(photoIndex), stackIndex: 0)
         }
         ctrl.onScanComplete = {
-            session.moveMotor(.rotor, angle: 0, mode: .absolute)  // return to equator
+            // Daemon ignores absolute-to-0° (no-op by design). Use Z button + relative
+            // steps in MotorControlsView to reposition manually after scan.
             controller = nil
         }
         controller = ctrl
@@ -211,30 +212,30 @@ struct MotorControlsView: View {
 
             Divider().frame(height: 20)
 
-            // Step back
+            // Step back (relative)
             ForEach([-45, -10, -1], id: \.self) { deg in
-                Button("\(deg)°") { session.moveMotor(motor, angle: Float(deg), mode: .relative) }
+                Button("\(deg)°") { session.moveMotor(motor, angle: Float(deg)) }
                     .buttonStyle(.bordered).controlSize(.small)
             }
 
             Divider().frame(height: 20)
 
-            // Step forward
+            // Step forward (relative)
             ForEach([1, 10, 45], id: \.self) { deg in
-                Button("+\(deg)°") { session.moveMotor(motor, angle: Float(deg), mode: .relative) }
+                Button("+\(deg)°") { session.moveMotor(motor, angle: Float(deg)) }
                     .buttonStyle(.bordered).controlSize(.small)
             }
 
             Divider().frame(height: 20)
 
-            // Absolute move
+            // Absolute move (daemon ignores 0.0° — use step buttons to reach exact home)
             TextField("0", text: targetText)
                 .textFieldStyle(.roundedBorder)
                 .frame(width: 52)
             Text("°").foregroundStyle(.secondary)
             Button("Move") {
                 if let deg = Float(targetText.wrappedValue) {
-                    session.moveMotor(motor, angle: deg, mode: .absolute)
+                    session.moveMotor(motor, angle: deg, relative: false)
                 }
             }
             .buttonStyle(.bordered).controlSize(.small)

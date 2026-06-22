@@ -16,6 +16,7 @@ final class DeviceSession {
 
     private(set) var state: State = .disconnected
     var isLightOn: Bool = false
+    private var sentCameraSetup = false
 
     let config: HardwareConfig
     let tcp = TCPClient()
@@ -59,23 +60,28 @@ final class DeviceSession {
         tcp.send(type: .disconnect)
         tcp.disconnect()
         state = .disconnected
+        sentCameraSetup = false
     }
 
     // MARK: - Hardware commands
 
     func setLight(on: Bool) {
-        isLightOn = on   // optimistic — device doesn't echo light packets reliably
-        // Daemon has two light pins; send both indices
+        isLightOn = on
+        // Inner ring (index 0) — send one at a time; outer ring sent separately
         tcp.send(type: .light, payload: LightPacket(lightIndex: 0, on: on).encode())
         tcp.send(type: .light, payload: LightPacket(lightIndex: 1, on: on).encode())
     }
 
-    func moveMotor(_ motor: MotorPacket.MotorID, angle: Float, mode: MotorPacket.Mode = .relative) {
-        tcp.send(type: .motor, payload: MotorPacket(motor: motor, mode: mode, angle: angle).encode())
+    func moveMotor(_ motor: MotorPacket.MotorID, angle: Float, relative: Bool = true) {
+        let pkt = MotorPacket(motor: motor, angle: angle, mode: relative ? 0 : 1, setZero: 0)
+        tcp.send(type: .motor, payload: pkt.encode())
     }
 
+    /// Marks the current physical position as the 0° reference for this motor.
+    /// Does NOT move the motor.
     func zeroMotor(_ motor: MotorPacket.MotorID) {
-        tcp.send(type: .motor, payload: MotorPacket(motor: motor, mode: .zero, angle: 0).encode())
+        let pkt = MotorPacket(motor: motor, angle: 0, mode: 1, setZero: 1)
+        tcp.send(type: .motor, payload: pkt.encode())
     }
 
     // MARK: - Private
@@ -92,10 +98,12 @@ final class DeviceSession {
             if let msg = String(data: data, encoding: .utf8) {
                 NSLog("📋 Device command: \(msg.prefix(200))")
             }
-            // Config echo (large command packet) → send camera setup packet.
-            if case .connecting = state, data.count > 200 {
+            // Config echo is the first large command (>200 bytes) from the daemon.
+            // Send camera setup exactly once — guard against re-trigger from later
+            // large messages like "Available cameras" (also >200 bytes).
+            if case .connecting = state, !sentCameraSetup, data.count > 200 {
+                sentCameraSetup = true
                 tcp.send(type: .motor, payload: CameraSetupPacket().encode())
-                // Stay in .connecting; .ready fires when camera setup ack arrives.
             }
             // Camera setup ack contains "camera configuration packet".
             if case .connecting = state,
