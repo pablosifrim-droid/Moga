@@ -25,6 +25,7 @@ final class ScanController {
     private(set) var totalPhotos: Int = 0
 
     var onPhotoReceived: ((UInt32, Data) -> Void)?   // (positionIndex, jpegData)
+    var onScanComplete: (() -> Void)?
 
     private let session: DeviceSession
 
@@ -181,6 +182,7 @@ final class ScanController {
                 if self.photosReceived == self.positions.count {
                     self.state = .complete
                     NSLog("✅ Scan complete, \(self.photosReceived) photos")
+                    self.onScanComplete?()
                 }
             }
         }

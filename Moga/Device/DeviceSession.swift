@@ -1,7 +1,8 @@
 import Foundation
 
-// Orchestrates the full lifecycle of a connection to one OpenScan device.
-// Sends the Connect handshake, tracks device state, and routes incoming packets.
+// Manages the TCP connection lifecycle and handshake with one OpenScan device.
+// After the device echoes the config back (command packet >200 bytes), it is
+// ready to accept CameraPackets — this is signalled via onReady.
 
 @Observable
 final class DeviceSession {
@@ -14,10 +15,13 @@ final class DeviceSession {
     }
 
     private(set) var state: State = .disconnected
-    private(set) var isLightOn: Bool = false
+    var isLightOn: Bool = false
 
     let config: HardwareConfig
     let tcp = TCPClient()
+
+    /// Called once when the device echoes the config and is ready for scan commands.
+    var onReady: (() -> Void)?
 
     init(config: HardwareConfig) {
         self.config = config
@@ -34,11 +38,10 @@ final class DeviceSession {
 
         tcp.connect(host: config.hostname, port: config.port)
 
-        // Watch TCP state changes
         Task { @MainActor in
             while true {
                 try? await Task.sleep(for: .milliseconds(100))
-                switch tcp.state {
+                switch self.tcp.state {
                 case .connected:
                     self.sendHandshake()
                     return
@@ -61,25 +64,20 @@ final class DeviceSession {
     // MARK: - Hardware commands
 
     func setLight(on: Bool) {
-        let packet = LightPacket(on: on)
-        tcp.send(type: .light, payload: packet.encode())
+        isLightOn = on   // optimistic — device doesn't echo light packets reliably
+        tcp.send(type: .light, payload: LightPacket(on: on).encode())
     }
 
     func moveMotor(_ motor: MotorPacket.MotorID, angle: Float, mode: MotorPacket.Mode = .relative) {
-        let packet = MotorPacket(motor: motor, mode: mode, angle: angle, zeroPosition: false)
-        tcp.send(type: .motor, payload: packet.encode())
+        tcp.send(type: .motor, payload: MotorPacket(motor: motor, mode: mode, angle: angle, zeroPosition: false).encode())
     }
 
     // MARK: - Private
 
     private func sendHandshake() {
-        let connect = ConnectPacket(protocolVersion: 0, enableLogging: true)
-        tcp.send(type: .connect, payload: connect.encode())
-
-        let cfg = ConfigPacket()
-        tcp.send(type: .config, payload: cfg.encode())
-
-        state = .ready
+        tcp.send(type: .connect, payload: ConnectPacket(protocolVersion: 0, enableLogging: true).encode())
+        tcp.send(type: .config, payload: ConfigPacket().encode())
+        // State stays .connecting; .ready is set after config echo arrives
     }
 
     private func handle(type: PacketType, data: Data) {
@@ -87,6 +85,18 @@ final class DeviceSession {
         case .command:
             if let msg = String(data: data, encoding: .utf8) {
                 NSLog("📋 Device command: \(msg.prefix(200))")
+            }
+            // Config echo (large command packet) → send camera setup packet.
+            if case .connecting = state, data.count > 200 {
+                tcp.send(type: .motor, payload: CameraSetupPacket().encode())
+                // Stay in .connecting; .ready fires when camera setup ack arrives.
+            }
+            // Camera setup ack contains "camera configuration packet".
+            if case .connecting = state,
+               let msg = String(data: data, encoding: .utf8),
+               msg.contains("camera configuration packet") {
+                state = .ready
+                onReady?()
             }
         case .info:
             NSLog("ℹ️ Device info packet (\(data.count) bytes)")

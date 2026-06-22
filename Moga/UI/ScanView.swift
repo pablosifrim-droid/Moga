@@ -8,6 +8,7 @@ struct ScanView: View {
 
     @State private var selectedPattern: ScanPattern = .fibonacci
     @State private var photoCount: Int = 100
+    @State private var photoCountText: String = "100"
     @State private var projectName: String = ""
     @State private var outputFolder: URL? = nil
     @State private var controller: ScanController? = nil
@@ -59,13 +60,28 @@ struct ScanView: View {
                         }
                         .pickerStyle(.segmented)
 
-                        Stepper("Photos: \(photoCount)", value: $photoCount, in: 10...500, step: 10)
+                        HStack(spacing: 8) {
+                            Text("Photos")
+                            TextField("", text: $photoCountText)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 64)
+                                .onSubmit { commitPhotoCount() }
+                                .onChange(of: photoCountText) { _, _ in commitPhotoCount() }
+                            Stepper("", value: $photoCount, in: 1...999)
+                                .labelsHidden()
+                                .onChange(of: photoCount) { _, v in
+                                    photoCountText = "\(v)"
+                                }
+                        }
                     }
                     .padding(4)
                 }
 
                 // Focus stacking
                 FocusStackConfigView(config: focusConfig)
+
+                // Motor controls
+                MotorControlsView(session: session)
 
                 // Light control
                 GroupBox("Lighting") {
@@ -85,7 +101,7 @@ struct ScanView: View {
                     GroupBox("Progress") {
                         VStack(alignment: .leading, spacing: 8) {
                             ProgressView(value: progress)
-                            Text("\(ctrl.photosReceived) photos received")
+                            Text("\(ctrl.photosReceived) / \(photoCount) photos")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                         .padding(4)
@@ -104,6 +120,12 @@ struct ScanView: View {
                 }
             }
             .padding(24)
+        }
+    }
+
+    private func commitPhotoCount() {
+        if let n = Int(photoCountText), n >= 1, n <= 999 {
+            photoCount = n
         }
     }
 
@@ -136,6 +158,11 @@ struct ScanView: View {
             try? projectManager.savePhoto(jpeg, project: project,
                                           positionIndex: Int(photoIndex), stackIndex: 0)
         }
+        ctrl.onScanComplete = {
+            // Return rotor to 0° (absolute) after scan finishes
+            session.moveMotor(.rotor, angle: 0, mode: .absolute)
+            controller = nil
+        }
         controller = ctrl
         ctrl.start(photoCount: photoCount,
                    stackSize: UInt32(focusConfig.clampedStackSize))
@@ -145,5 +172,73 @@ struct ScanView: View {
         controller?.cancel()
         controller = nil
         progress = 0
+    }
+}
+
+// MARK: - Motor controls
+
+struct MotorControlsView: View {
+    let session: DeviceSession
+    @State private var rotorTarget: String = "0"
+    @State private var turntableTarget: String = "0"
+
+    var body: some View {
+        GroupBox("Motor Controls") {
+            VStack(spacing: 0) {
+                Text("Use these to position the rotor at the equator (0°) before starting a scan. The rotor returns to 0° automatically after the scan.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.bottom, 10)
+
+                motorRow(label: "Rotor", motor: .rotor, targetText: $rotorTarget)
+                Divider().padding(.vertical, 6)
+                motorRow(label: "Turntable", motor: .turntable, targetText: $turntableTarget)
+            }
+            .padding(6)
+        }
+    }
+
+    @ViewBuilder
+    private func motorRow(label: String, motor: MotorPacket.MotorID, targetText: Binding<String>) -> some View {
+        HStack(spacing: 4) {
+            Text(label)
+                .frame(width: 72, alignment: .leading)
+                .font(.caption.bold())
+
+            // Zero
+            Button("Z") { session.moveMotor(motor, angle: 0, mode: .absolute) }
+                .buttonStyle(.bordered).controlSize(.small)
+                .help("Move to 0°")
+
+            Divider().frame(height: 20)
+
+            // Step back
+            ForEach([-45, -10, -1], id: \.self) { deg in
+                Button("\(deg)°") { session.moveMotor(motor, angle: Float(deg), mode: .relative) }
+                    .buttonStyle(.bordered).controlSize(.small)
+            }
+
+            Divider().frame(height: 20)
+
+            // Step forward
+            ForEach([1, 10, 45], id: \.self) { deg in
+                Button("+\(deg)°") { session.moveMotor(motor, angle: Float(deg), mode: .relative) }
+                    .buttonStyle(.bordered).controlSize(.small)
+            }
+
+            Divider().frame(height: 20)
+
+            // Absolute move
+            TextField("0", text: targetText)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 52)
+            Text("°").foregroundStyle(.secondary)
+            Button("Move") {
+                if let deg = Float(targetText.wrappedValue) {
+                    session.moveMotor(motor, angle: deg, mode: .absolute)
+                }
+            }
+            .buttonStyle(.bordered).controlSize(.small)
+        }
     }
 }
